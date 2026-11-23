@@ -1,0 +1,21 @@
+[
+  {"id": "andalucia", "nombre": "Andalucía"},
+  {"id": "aragon", "nombre": "Aragón"},
+  {"id": "asturias", "nombre": "Asturias"},
+  {"id": "islas-baleares", "nombre": "Islas Baleares"},
+  {"id": "canarias", "nombre": "Canarias"},
+  {"id": "cantabria", "nombre": "Cantabria"},
+  {"id": "castilla-la-mancha", "nombre": "Castilla-La Mancha"},
+  {"id": "castilla-y-leon", "nombre": "Castilla y León"},
+  {"id": "cataluna", "nombre": "Cataluña"},
+  {"id": "ceuta", "nombre": "Ceuta"},
+  {"id": "extremadura", "nombre": "Extremadura"},
+  {"id": "galicia", "nombre": "Galicia"},
+  {"id": "la-rioja", "nombre": "La Rioja"},
+  {"id": "madrid", "nombre": "Comunidad de Madrid"},
+  {"id": "melilla", "nombre": "Melilla"},
+  {"id": "murcia", "nombre": "Región de Murcia"},
+  {"id": "navarra", "nombre": "Navarra"},
+  {"id": "pais-vasco", "nombre": "País Vasco"},
+  {"id": "valencia", "nombre": "Comunitat Valenciana"}
+]

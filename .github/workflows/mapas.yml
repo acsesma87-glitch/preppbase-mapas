@@ -1,0 +1,150 @@
+# Genera cada mes los paquetes de mapas sin conexión de PreppBase, uno por
+# comunidad autónoma, y los publica como una versión (release) de este
+# repositorio. La aplicación lee releases/latest/download/indice.json.
+name: Mapas
+
+on:
+  schedule:
+    - cron: "17 2 3 * *"   # día 3 de cada mes
+  workflow_dispatch:
+    inputs:
+      zonas:
+        description: "Zonas separadas por comas (vacío = todas)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  preparar:
+    runs-on: ubuntu-latest
+    outputs:
+      zonas: ${{ steps.zonas.outputs.zonas }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: zonas
+        name: Lista de zonas
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          todas = [z["id"] for z in json.load(open("zonas.json"))]
+          pedidas = [z.strip() for z in os.environ["PEDIDAS"].split(",") if z.strip()]
+          desconocidas = set(pedidas) - set(todas)
+          if desconocidas:
+              raise SystemExit(f"Zonas desconocidas: {desconocidas}")
+          print("zonas=" + json.dumps(pedidas or todas))
+          PY
+        env:
+          PEDIDAS: ${{ inputs.zonas }}
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "25" }
+      - name: Descargar Planetiler y las fuentes comunes (mar, Natural Earth)
+        run: |
+          mkdir -p data/sources
+          gh release download -R onthegomap/planetiler --pattern planetiler.jar
+          curl -fsSL -o data/sources/la-rioja.osm.pbf \
+            https://download.geofabrik.de/europe/spain/la-rioja-latest.osm.pbf
+          java -jar planetiler.jar --osm-path=data/sources/la-rioja.osm.pbf \
+            --download --only-download
+          rm data/sources/la-rioja.osm.pbf
+          ls -la data/sources
+      - uses: actions/cache/save@v4
+        with:
+          path: |
+            planetiler.jar
+            data/sources
+          key: fuentes-${{ github.run_id }}
+
+  zona:
+    needs: preparar
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        zona: ${{ fromJson(needs.preparar.outputs.zonas) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            planetiler.jar
+            data/sources
+          key: fuentes-${{ github.run_id }}
+          fail-on-cache-miss: true
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "25" }
+      - name: Instalar osmium
+        run: sudo apt-get update -q && sudo apt-get install -y -q osmium-tool
+      - name: Descargar OpenStreetMap (Geofabrik)
+        run: |
+          curl -fsSL -o zona.osm.pbf \
+            https://download.geofabrik.de/europe/spain/${{ matrix.zona }}-latest.osm.pbf
+          FECHA=$(osmium fileinfo -g header.option.osmosis_replication_timestamp zona.osm.pbf | cut -c1-10)
+          test -n "$FECHA"
+          echo "FECHA=$FECHA" >> "$GITHUB_ENV"
+      - name: Mapa (PMTiles, esquema OpenMapTiles)
+        run: |
+          mkdir -p salida
+          java -Xmx10g -jar planetiler.jar --osm-path=zona.osm.pbf \
+            --output=salida/${{ matrix.zona }}.pmtiles --download --force
+      - name: Puntos de interés
+        run: |
+          osmium tags-filter zona.osm.pbf \
+            nwr/amenity=shelter,drinking_water,water_point,fuel,pharmacy,hospital,clinic,doctors \
+            nwr/tourism=alpine_hut,wilderness_hut \
+            nwr/natural=spring nwr/man_made=water_tap,water_well \
+            nwr/healthcare=hospital,clinic,centre,pharmacy \
+            -o puntos.osm.pbf
+          osmium export puntos.osm.pbf -f geojsonseq -a type,id \
+            --geometry-types=point,polygon -o puntos.geojsonseq
+          python3 scripts/pois.py puntos.geojsonseq \
+            salida/${{ matrix.zona }}-puntos.json.gz "$FECHA"
+          ls -la salida
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zona-${{ matrix.zona }}
+          path: salida/
+          retention-days: 3
+          compression-level: 0
+
+  publicar:
+    needs: zona
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: zona-*
+          path: salida
+          merge-multiple: true
+      - name: Fuentes tipográficas para los nombres del mapa
+        run: |
+          git clone -q --depth 1 --filter=blob:none --sparse \
+            https://github.com/protomaps/basemaps-assets.git assets
+          cd assets
+          git sparse-checkout set "fonts/Noto Sans Regular" "fonts/Noto Sans Medium"
+          cd fonts
+          # Solo los alfabetos latinos y la puntuación: los nombres de España.
+          zip -q -r ../../salida/fuentes.zip \
+            "Noto Sans Regular"/{0-255,256-511,512-767,768-1023,8192-8447}.pbf \
+            "Noto Sans Medium"/{0-255,256-511,512-767,768-1023,8192-8447}.pbf
+          ls -la ../../salida
+      - name: Índice y publicación
+        run: |
+          ETIQUETA="mapas-$(date -u +%Y-%m-%d)-${{ github.run_number }}"
+          python3 scripts/indice.py salida "$ETIQUETA"
+          cat salida/indice.json
+          gh release create "$ETIQUETA" salida/* --latest \
+            --title "Mapas $(date -u +%d/%m/%Y)" \
+            --notes "Paquetes de mapas sin conexión de PreppBase. Datos © colaboradores de OpenStreetMap (ODbL)."
+      - name: Borrar versiones antiguas (se conservan las 2 últimas)
+        run: |
+          gh release list --limit 100 --json tagName,createdAt \
+            -q 'sort_by(.createdAt) | reverse | .[2:] | .[].tagName' |
+          while read -r t; do gh release delete "$t" --yes --cleanup-tag; done
