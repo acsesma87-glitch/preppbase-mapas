@@ -129,11 +129,11 @@ jobs:
             https://github.com/protomaps/basemaps-assets.git assets
           cd assets
           git sparse-checkout set "fonts/Noto Sans Regular" "fonts/Noto Sans Medium"
-          cd fonts
-          # Solo los alfabetos latinos y la puntuación: los nombres de España.
-          zip -q -r ../../salida/fuentes.zip \
-            "Noto Sans Regular"/{0-255,256-511,512-767,768-1023,8192-8447}.pbf \
-            "Noto Sans Medium"/{0-255,256-511,512-767,768-1023,8192-8447}.pbf
+          # Sin espacios en los nombres: la aplicación los lee como archivos.
+          mkdir fuentes
+          cp -r "fonts/Noto Sans Regular" fuentes/NotoSansRegular
+          cp -r "fonts/Noto Sans Medium" fuentes/NotoSansMedium
+          cd fuentes && zip -q -r ../../salida/fuentes.zip NotoSansRegular NotoSansMedium
           ls -la ../../salida
       - name: Índice y publicación
         run: |

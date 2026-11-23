@@ -88,8 +88,14 @@ def main(entrada, salida, fecha):
             puntos.append([CATEGORIAS.index(cat), round(lat, 6),
                            round(lon, 6), t.get("name", ""),
                            detalle(t, cat)])
+    if not puntos:
+        sys.exit("Sin puntos de interés: algo ha fallado")
+    lats = [p[1] for p in puntos]
+    lons = [p[2] for p in puntos]
+    # Rectángulo de la zona (oeste, sur, este, norte), para centrar el mapa.
+    limites = [min(lons), min(lats), max(lons), max(lats)]
     datos = {"version": 1, "fecha": fecha, "categorias": CATEGORIAS,
-             "puntos": puntos}
+             "limites": limites, "puntos": puntos}
     with gzip.open(salida, "wt", encoding="utf-8") as f:
         json.dump(datos, f, ensure_ascii=False, separators=(",", ":"))
     print(f"{len(puntos)} puntos")

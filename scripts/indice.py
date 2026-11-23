@@ -35,6 +35,7 @@ def main(carpeta, etiqueta):
             datos = json.load(f)
         zonas.append({"id": z["id"], "nombre": z["nombre"],
                       "fecha_datos": datos["fecha"],
+                      "limites": datos["limites"],
                       "mapa": archivo(carpeta, mapa),
                       "puntos": {**archivo(carpeta, puntos),
                                  "total": len(datos["puntos"])}})
