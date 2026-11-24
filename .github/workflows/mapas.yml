@@ -111,6 +111,20 @@ jobs:
           python3 scripts/pois.py puntos.geojsonseq \
             salida/${{ matrix.zona }}-puntos.json.gz "$FECHA"
           ls -la salida
+      - name: Rutas sin conexión (Valhalla 3.9.2, la versión que lleva la aplicación)
+        run: |
+          mkdir -p valhalla
+          cp zona.osm.pbf valhalla/
+          docker run --rm -v "$PWD/valhalla:/data" ghcr.io/valhalla/valhalla:3.9.2 bash -c '
+            set -e
+            valhalla_build_config --mjolnir-tile-dir /data/tiles \
+              --mjolnir-tile-extract /data/tiles.tar \
+              --mjolnir-admin /data/admin.sqlite > /data/valhalla.json
+            valhalla_build_admins -c /data/valhalla.json /data/zona.osm.pbf
+            valhalla_build_tiles -c /data/valhalla.json /data/zona.osm.pbf
+            valhalla_build_extract -c /data/valhalla.json -v'
+          gzip -9 -c valhalla/tiles.tar > salida/${{ matrix.zona }}-rutas.tar.gz
+          ls -la valhalla/tiles.tar salida
       - uses: actions/upload-artifact@v4
         with:
           name: zona-${{ matrix.zona }}
@@ -134,7 +148,7 @@ jobs:
           for z in $(python3 -c "import json; print(' '.join(z['id'] for z in json.load(open('zonas.json'))))"); do
             if [ ! -f "salida/$z.pmtiles" ]; then
               echo "Sin datos nuevos de $z: se conserva la versión anterior"
-              gh release download --pattern "$z.pmtiles" --pattern "$z-puntos.json.gz" -D salida || true
+              gh release download --pattern "$z.pmtiles" --pattern "$z-puntos.json.gz" --pattern "$z-rutas.tar.gz" -D salida || true
             fi
           done
       - name: Fuentes tipográficas para los nombres del mapa

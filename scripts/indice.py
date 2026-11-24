@@ -28,6 +28,7 @@ def main(carpeta, etiqueta):
     for z in todas:
         mapa = f'{z["id"]}.pmtiles'
         puntos = f'{z["id"]}-puntos.json.gz'
+        rutas = f'{z["id"]}-rutas.tar.gz'
         if not (os.path.exists(os.path.join(carpeta, mapa))
                 and os.path.exists(os.path.join(carpeta, puntos))):
             continue
@@ -38,7 +39,11 @@ def main(carpeta, etiqueta):
                       "limites": datos["limites"],
                       "mapa": archivo(carpeta, mapa),
                       "puntos": {**archivo(carpeta, puntos),
-                                 "total": len(datos["puntos"])}})
+                                 "total": len(datos["puntos"])},
+                      # Rutas sin conexión (fase 2), si se han generado.
+                      **({"rutas": archivo(carpeta, rutas)}
+                         if os.path.exists(os.path.join(carpeta, rutas))
+                         else {})})
     if not zonas:
         sys.exit("No se ha generado ninguna zona")
     indice = {"version": 1, "etiqueta": etiqueta,               "fuentes": archivo(carpeta, "fuentes.zip"), "zonas": zonas}
