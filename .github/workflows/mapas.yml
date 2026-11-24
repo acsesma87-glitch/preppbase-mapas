@@ -111,20 +111,6 @@ jobs:
           python3 scripts/pois.py puntos.geojsonseq \
             salida/${{ matrix.zona }}-puntos.json.gz "$FECHA"
           ls -la salida
-      - name: Rutas sin conexión (Valhalla 3.9.2, la versión que lleva la aplicación)
-        run: |
-          mkdir -p valhalla
-          cp zona.osm.pbf valhalla/
-          docker run --rm -v "$PWD/valhalla:/data" ghcr.io/valhalla/valhalla:3.9.2 bash -c '
-            set -e
-            valhalla_build_config --mjolnir-tile-dir /data/tiles \
-              --mjolnir-tile-extract /data/tiles.tar \
-              --mjolnir-admin /data/admin.sqlite > /data/valhalla.json
-            valhalla_build_admins -c /data/valhalla.json /data/zona.osm.pbf
-            valhalla_build_tiles -c /data/valhalla.json /data/zona.osm.pbf
-            valhalla_build_extract -c /data/valhalla.json -v'
-          gzip -9 -c valhalla/tiles.tar > salida/${{ matrix.zona }}-rutas.tar.gz
-          ls -la valhalla/tiles.tar salida
       - uses: actions/upload-artifact@v4
         with:
           name: zona-${{ matrix.zona }}
@@ -132,15 +118,77 @@ jobs:
           retention-days: 3
           compression-level: 0
 
+  rutas:
+    # Rutas de toda España en una sola construcción, repartidas por zona
+    # (sección 50): así las rutas pueden pasar de una comunidad a otra.
+    # Canarias va aparte (no está en el extracto de España y no tiene
+    # carreteras que la unan con la península).
+    needs: preparar
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - name: Liberar espacio en disco
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/share/boost /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: Descargar OpenStreetMap de España y Canarias, y los contornos
+        run: |
+          mkdir -p valhalla/espana valhalla/canarias poly
+          bajar() {
+            curl -fsSL --retry 4 --retry-all-errors --retry-delay 60 -o "$2" \
+              "https://download.geofabrik.de/$1" ||
+            curl -fsSL --retry 4 --retry-all-errors --retry-delay 60 -o "$2" \
+              "https://download.openstreetmap.fr/extracts/$1"
+          }
+          bajar europe/spain-latest.osm.pbf valhalla/espana/zona.osm.pbf
+          bajar africa/canary-islands-latest.osm.pbf valhalla/canarias/zona.osm.pbf
+          for z in $(python3 -c "import json; print(' '.join(z['id'] for z in json.load(open('zonas.json'))))"); do
+            r=$(python3 -c "import json; print(next(z.get('geofabrik', 'europe/spain/' + z['id']) for z in json.load(open('zonas.json')) if z['id'] == '$z'))")
+            curl -fsSL --retry 6 --retry-all-errors --retry-delay 30 -o poly/$z.poly \
+              "https://download.geofabrik.de/$r.poly"
+          done
+          ls -la valhalla/*/ poly | head -40
+      - name: Teselas de Valhalla 3.9.2 (la versión que lleva la aplicación)
+        run: |
+          for parte in espana canarias; do
+            docker run --rm -v "$PWD/valhalla/$parte:/data" ghcr.io/valhalla/valhalla:3.9.2 bash -c '
+              set -e
+              valhalla_build_config --mjolnir-tile-dir /data/tiles \
+                --mjolnir-admin /data/admin.sqlite > /data/valhalla.json
+              valhalla_build_admins -c /data/valhalla.json /data/zona.osm.pbf
+              valhalla_build_tiles -c /data/valhalla.json /data/zona.osm.pbf'
+            sudo chown -R "$USER" valhalla/$parte
+            rm valhalla/$parte/zona.osm.pbf
+            du -sh valhalla/$parte/tiles
+          done
+      - name: Repartir por zona
+        run: |
+          mkdir -p salida
+          for z in $(python3 -c "import json; print(' '.join(z['id'] for z in json.load(open('zonas.json'))))"); do
+            parte=espana; [ "$z" = canarias ] && parte=canarias
+            python3 scripts/repartir_rutas.py valhalla/$parte/tiles poly/$z.poly \
+              salida/$z-rutas.tar.gz
+          done
+          ls -la salida
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rutas
+          path: salida/
+          retention-days: 3
+          compression-level: 0
+
   publicar:
-    needs: zona
-    if: ${{ !cancelled() }}
+    needs: [zona, rutas]
+    # Sin rutas nuevas no se publica: no se mezclan teselas de construcciones
+    # distintas, que no encajarían entre sí.
+    if: ${{ !cancelled() && needs.rutas.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          pattern: zona-*
           path: salida
           merge-multiple: true
       - name: Zonas que han fallado se mantienen de la versión anterior
@@ -148,7 +196,7 @@ jobs:
           for z in $(python3 -c "import json; print(' '.join(z['id'] for z in json.load(open('zonas.json'))))"); do
             if [ ! -f "salida/$z.pmtiles" ]; then
               echo "Sin datos nuevos de $z: se conserva la versión anterior"
-              gh release download --pattern "$z.pmtiles" --pattern "$z-puntos.json.gz" --pattern "$z-rutas.tar.gz" -D salida || true
+              gh release download --pattern "$z.pmtiles" --pattern "$z-puntos.json.gz" -D salida || true
             fi
           done
       - name: Fuentes tipográficas para los nombres del mapa
