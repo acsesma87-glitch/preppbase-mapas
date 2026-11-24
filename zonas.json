@@ -3,7 +3,7 @@
   {"id": "aragon", "nombre": "Aragón"},
   {"id": "asturias", "nombre": "Asturias"},
   {"id": "islas-baleares", "nombre": "Islas Baleares"},
-  {"id": "canarias", "nombre": "Canarias"},
+  {"id": "canarias", "nombre": "Canarias", "geofabrik": "africa/canary-islands"},
   {"id": "cantabria", "nombre": "Cantabria"},
   {"id": "castilla-la-mancha", "nombre": "Castilla-La Mancha"},
   {"id": "castilla-y-leon", "nombre": "Castilla y León"},

@@ -46,7 +46,8 @@ jobs:
         run: |
           mkdir -p data/sources
           gh release download -R onthegomap/planetiler --pattern planetiler.jar
-          curl -fsSL -o data/sources/la-rioja.osm.pbf \
+          curl -fsSL --retry 6 --retry-all-errors --retry-delay 60 \
+            -o data/sources/la-rioja.osm.pbf \
             https://download.geofabrik.de/europe/spain/la-rioja-latest.osm.pbf
           java -jar planetiler.jar --osm-path=data/sources/la-rioja.osm.pbf \
             --download --only-download
@@ -64,7 +65,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 6
+      max-parallel: 3
       matrix:
         zona: ${{ fromJson(needs.preparar.outputs.zonas) }}
     steps:
@@ -82,8 +83,10 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q osmium-tool
       - name: Descargar OpenStreetMap (Geofabrik)
         run: |
-          curl -fsSL -o zona.osm.pbf \
-            https://download.geofabrik.de/europe/spain/${{ matrix.zona }}-latest.osm.pbf
+          RUTA=$(python3 -c "import json; print(next(z.get('geofabrik', 'europe/spain/' + z['id']) for z in json.load(open('zonas.json')) if z['id'] == '${{ matrix.zona }}'))")
+          # Reintentos: Geofabrik corta si se le piden muchas descargas.
+          curl -fsSL --retry 6 --retry-all-errors --retry-delay 60 \
+            -o zona.osm.pbf https://download.geofabrik.de/$RUTA-latest.osm.pbf
           FECHA=$(osmium fileinfo -g header.option.osmosis_replication_timestamp zona.osm.pbf | cut -c1-10)
           test -n "$FECHA"
           echo "FECHA=$FECHA" >> "$GITHUB_ENV"
@@ -123,6 +126,14 @@ jobs:
           pattern: zona-*
           path: salida
           merge-multiple: true
+      - name: Zonas que han fallado se mantienen de la versión anterior
+        run: |
+          for z in $(python3 -c "import json; print(' '.join(z['id'] for z in json.load(open('zonas.json'))))"); do
+            if [ ! -f "salida/$z.pmtiles" ]; then
+              echo "Sin datos nuevos de $z: se conserva la versión anterior"
+              gh release download --pattern "$z.pmtiles" --pattern "$z-puntos.json.gz" -D salida || true
+            fi
+          done
       - name: Fuentes tipográficas para los nombres del mapa
         run: |
           git clone -q --depth 1 --filter=blob:none --sparse \
