@@ -85,8 +85,11 @@ jobs:
         run: |
           RUTA=$(python3 -c "import json; print(next(z.get('geofabrik', 'europe/spain/' + z['id']) for z in json.load(open('zonas.json')) if z['id'] == '${{ matrix.zona }}'))")
           # Reintentos: Geofabrik corta si se le piden muchas descargas.
-          curl -fsSL --retry 6 --retry-all-errors --retry-delay 60 \
-            -o zona.osm.pbf https://download.geofabrik.de/$RUTA-latest.osm.pbf
+          curl -fsSL --retry 4 --retry-all-errors --retry-delay 60 \
+            -o zona.osm.pbf https://download.geofabrik.de/$RUTA-latest.osm.pbf ||
+          # Segunda fuente si Geofabrik no responde (extractos de OSM France).
+          curl -fsSL --retry 4 --retry-all-errors --retry-delay 60 \
+            -o zona.osm.pbf https://download.openstreetmap.fr/extracts/$RUTA-latest.osm.pbf
           FECHA=$(osmium fileinfo -g header.option.osmosis_replication_timestamp zona.osm.pbf | cut -c1-10)
           test -n "$FECHA"
           echo "FECHA=$FECHA" >> "$GITHUB_ENV"
