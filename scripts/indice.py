@@ -1,7 +1,8 @@
 """Crea indice.json, la lista de paquetes que lee la aplicación.
 
 Uso: python3 indice.py CARPETA ETIQUETA
-La carpeta contiene <zona>.pmtiles, <zona>-puntos.json.gz y fuentes.zip.
+La carpeta contiene <zona>.pmtiles, <zona>-puntos.json.gz, fuentes.zip y,
+si los hay, <zona>-rutas.tar.gz y <zona>-lugares.json.gz.
 """
 
 import gzip
@@ -29,6 +30,7 @@ def main(carpeta, etiqueta):
         mapa = f'{z["id"]}.pmtiles'
         puntos = f'{z["id"]}-puntos.json.gz'
         rutas = f'{z["id"]}-rutas.tar.gz'
+        lugares = f'{z["id"]}-lugares.json.gz'
         if not (os.path.exists(os.path.join(carpeta, mapa))
                 and os.path.exists(os.path.join(carpeta, puntos))):
             continue
@@ -43,6 +45,10 @@ def main(carpeta, etiqueta):
                       # Rutas sin conexión (fase 2), si se han generado.
                       **({"rutas": archivo(carpeta, rutas)}
                          if os.path.exists(os.path.join(carpeta, rutas))
+                         else {}),
+                      # Nombres de sitios para el buscador (72.1).
+                      **({"lugares": archivo(carpeta, lugares)}
+                         if os.path.exists(os.path.join(carpeta, lugares))
                          else {})})
     if not zonas:
         sys.exit("No se ha generado ninguna zona")

@@ -111,6 +111,17 @@ jobs:
           python3 scripts/pois.py puntos.geojsonseq \
             salida/${{ matrix.zona }}-puntos.json.gz "$FECHA"
           ls -la salida
+      - name: Lugares con nombre para el buscador
+        run: |
+          osmium tags-filter zona.osm.pbf \
+            n/place=city,town,village,hamlet,isolated_dwelling,suburb,quarter,neighbourhood,locality \
+            n/natural=peak,saddle n/mountain_pass=yes \
+            -o lugares.osm.pbf
+          osmium export lugares.osm.pbf -f geojsonseq \
+            --geometry-types=point -o lugares.geojsonseq
+          python3 scripts/lugares.py lugares.geojsonseq \
+            salida/${{ matrix.zona }}-lugares.json.gz "$FECHA"
+          ls -la salida
       - uses: actions/upload-artifact@v4
         with:
           name: zona-${{ matrix.zona }}
@@ -196,7 +207,7 @@ jobs:
           for z in $(python3 -c "import json; print(' '.join(z['id'] for z in json.load(open('zonas.json'))))"); do
             if [ ! -f "salida/$z.pmtiles" ]; then
               echo "Sin datos nuevos de $z: se conserva la versión anterior"
-              gh release download --pattern "$z.pmtiles" --pattern "$z-puntos.json.gz" -D salida || true
+              gh release download --pattern "$z.pmtiles" --pattern "$z-puntos.json.gz" --pattern "$z-lugares.json.gz" -D salida || true
             fi
           done
       - name: Fuentes tipográficas para los nombres del mapa

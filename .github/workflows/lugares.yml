@@ -1,0 +1,76 @@
+# Añade el buscador de sitios (paquetes de lugares) a la última versión de
+# mapas publicada, sin rehacer mapas ni rutas. Las versiones nuevas ya los
+# llevan (mapas.yml).
+name: Lugares
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  preparar:
+    runs-on: ubuntu-latest
+    outputs:
+      zonas: ${{ steps.zonas.outputs.zonas }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: zonas
+        run: echo "zonas=$(python3 -c "import json; print(json.dumps([z['id'] for z in json.load(open('zonas.json'))]))")" >> "$GITHUB_OUTPUT"
+
+  zona:
+    needs: preparar
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        zona: ${{ fromJson(needs.preparar.outputs.zonas) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Instalar osmium
+        run: sudo apt-get update -q && sudo apt-get install -y -q osmium-tool
+      - name: Descargar OpenStreetMap y sacar los lugares
+        run: |
+          RUTA=$(python3 -c "import json; print(next(z.get('geofabrik', 'europe/spain/' + z['id']) for z in json.load(open('zonas.json')) if z['id'] == '${{ matrix.zona }}'))")
+          curl -fsSL --retry 4 --retry-all-errors --retry-delay 60 \
+            -o zona.osm.pbf https://download.geofabrik.de/$RUTA-latest.osm.pbf ||
+          curl -fsSL --retry 4 --retry-all-errors --retry-delay 60 \
+            -o zona.osm.pbf https://download.openstreetmap.fr/extracts/$RUTA-latest.osm.pbf
+          FECHA=$(osmium fileinfo -g header.option.osmosis_replication_timestamp zona.osm.pbf | cut -c1-10)
+          mkdir -p salida
+          osmium tags-filter zona.osm.pbf \
+            n/place=city,town,village,hamlet,isolated_dwelling,suburb,quarter,neighbourhood,locality \
+            n/natural=peak,saddle n/mountain_pass=yes \
+            -o lugares.osm.pbf
+          osmium export lugares.osm.pbf -f geojsonseq \
+            --geometry-types=point -o lugares.geojsonseq
+          python3 scripts/lugares.py lugares.geojsonseq \
+            salida/${{ matrix.zona }}-lugares.json.gz "$FECHA"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lugares-${{ matrix.zona }}
+          path: salida/
+          retention-days: 3
+
+  publicar:
+    needs: zona
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: salida
+          merge-multiple: true
+      - name: Añadir a la última versión
+        run: |
+          ETIQUETA=$(gh release view --json tagName -q .tagName)
+          gh release download "$ETIQUETA" --pattern indice.json -D salida
+          python3 scripts/anadir_lugares.py salida
+          cat salida/indice.json | head -60
+          gh release upload "$ETIQUETA" salida/*-lugares.json.gz salida/indice.json --clobber
